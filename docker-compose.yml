@@ -1,0 +1,157 @@
+
+volumes:
+  esdata01:
+    driver: local
+  esdata02:
+    driver: local
+  esdata03:
+    driver: local
+  kibanadata:
+      driver: local
+
+
+networks:
+  mongocluster:
+    driver: bridge
+
+services:
+  api:
+    build: .
+    ports:
+      - 8000:8000
+    environment:
+      - ELASTICSEARCH_URI=http://es01:9200
+      - MONGO_URI=mongodb://mongo_db_node_01,mongo_db_node_02,mongo_db_node_03/?replicaSet=docker-replicaset
+      - REDIS_URL = redis://redis_cluster:7000
+    depends_on:
+      - es01
+      - es02
+      - es03
+      - mongo_db_node_01
+      - mongo_db_node_02
+      - mongo_db_node_03
+      - redis_cluster
+
+
+
+  mongo_cluster_init:
+    image: mongo
+    depends_on:
+      - mongo_db_node_01
+      - mongo_db_node_02
+      - mongo_db_node_03
+    volumes:
+      - ./environment/init-mongo.js:/scripts/init-mongo.js:ro
+    entrypoint:
+      [
+        "mongosh",
+        "--host",
+        "mongo_db_node_01",
+        "--file",
+        "/scripts/init-mongo.js"
+      ]
+
+  mongo_db_node_01:
+    image: mongo
+    volumes:
+      - ./data/mongo_node_01:/data/db
+    command: mongod --replSet docker-replicaset
+
+  mongo_db_node_02:
+    image: mongo
+    volumes:
+      - ./data/mongo_node_02:/data/db
+    command: mongod --replSet docker-replicaset
+
+  mongo_db_node_03:
+    image: mongo
+    volumes:
+      - ./data/mongo_node_03:/data/db
+    command: mongod --replSet docker-replicaset
+
+
+  es01:
+    image: elasticsearch:${STACK_VERSION}
+    volumes:
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - ${ES_PORT}:9200
+    environment:
+      - node.name=es01
+      - cluster.name=${CLUSTER_NAME}
+      - cluster.initial_master_nodes=es01,es02,es03
+      - discovery.seed_hosts=es02,es03
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    mem_limit: ${MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  es02:
+      depends_on:
+        - es01
+      image: elasticsearch:${STACK_VERSION}
+      volumes:
+        - esdata02:/usr/share/elasticsearch/data
+      environment:
+        - node.name=es02
+        - cluster.name=${CLUSTER_NAME}
+        - cluster.initial_master_nodes=es01,es02,es03
+        - discovery.seed_hosts=es01,es03
+        - bootstrap.memory_lock=true
+        - xpack.security.enabled=false
+        - xpack.security.http.ssl.enabled=false
+        - xpack.security.transport.ssl.enabled=false
+      mem_limit: ${MEM_LIMIT}
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+
+  es03:
+      depends_on:
+        - es02
+      image: elasticsearch:${STACK_VERSION}
+      volumes:
+        - esdata03:/usr/share/elasticsearch/data
+      environment:
+        - node.name=es03
+        - cluster.name=${CLUSTER_NAME}
+        - cluster.initial_master_nodes=es01,es02,es03
+        - discovery.seed_hosts=es01,es02
+        - bootstrap.memory_lock=true
+        - xpack.security.enabled=false
+        - xpack.security.http.ssl.enabled=false
+        - xpack.security.transport.ssl.enabled=false
+      mem_limit: ${MEM_LIMIT}
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+
+  kibana:
+      image: kibana:${STACK_VERSION}
+      volumes:
+        - kibanadata:/usr/share/kibana/data
+      ports:
+        - ${KIBANA_PORT}:5601
+      environment:
+        - SERVERNAME=kibana
+        - ELASTICSEARCH_HOSTS=http://es01:9200
+        - ELASTICSEARCH_USERNAME=kibana_system
+        - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      mem_limit: ${MEM_LIMIT}
+      
+  redis_insight:
+      image: redislabs/redisinsight:latest
+      ports:
+      - 8001:8001
+
+  redis_cluster:
+     image: grokzen/redis-cluster:6.2.0
+     ports:
+      - 7000-7005:7000-7005
